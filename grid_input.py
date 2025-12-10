@@ -1,9 +1,6 @@
+# grid_input.py
 """
-grid_input.py
-Handles:
-- Grid input from user
-- Start & goal input
-- Obstacle inflation for robot radius
+Fixed 10x10 grid (user-specified). Start & goal are entered by the user.
 """
 
 import numpy as np
@@ -19,72 +16,88 @@ def in_bounds(pos: Position, rows: int, cols: int) -> bool:
 
 
 def user_input_grid():
-    print("=== GRID SETUP ===")
+    """
+    Returns the user-chosen fixed 10x10 grid, and reads start & goal from the user.
+    """
+
+    grid = np.array([
+        [0,0,0,0,1,0,0,0,0,0],
+        [0,1,1,0,1,0,1,1,1,0],
+        [0,0,1,0,0,0,0,0,1,0],
+        [0,0,1,1,1,1,1,0,1,0],
+        [0,0,0,0,0,0,1,0,1,0],
+        [1,1,1,1,1,0,1,0,1,0],
+        [0,0,0,0,1,0,1,0,1,0],
+        [0,1,1,0,1,0,1,0,1,0],
+        [0,0,0,0,0,0,0,0,1,0],
+        [0,1,1,1,1,1,1,0,0,0],
+    ], dtype=int)
+
+    rows, cols = grid.shape
+
+    print("Using fixed 10x10 grid:")
+    print(grid)
+
+    # --- START INPUT ---
     while True:
         try:
-            rows = int(input("Enter number of rows (>1): "))
-            cols = int(input("Enter number of columns (>1): "))
-            if rows < 2 or cols < 2:
-                print("Rows and columns must be >= 2.")
+            sr_sc = input("Enter START position (row col): ").strip().split()
+            if len(sr_sc) != 2:
+                raise ValueError
+            sr, sc = int(sr_sc[0]), int(sr_sc[1])
+            if not in_bounds((sr, sc), rows, cols):
+                print("Start is out of bounds. Try again.")
+                continue
+            if grid[sr, sc] == 1:
+                print("Start is on an obstacle. Choose a free cell.")
                 continue
             break
-        except:
-            print("Invalid number. Try again.")
+        except ValueError:
+            print("Invalid format. Example: 0 9")
+        except Exception:
+            print("Invalid input. Example: 0 9")
 
-    grid = np.zeros((rows, cols), dtype=int)
-    print("\nEnter grid row by row (0 = free, 1 = obstacle).")
-
-    for r in range(rows):
-        while True:
-            row_str = input(f"Row {r} (space-separated {cols} values): ")
-            try:
-                vals = [int(x) for x in row_str.strip().split()]
-                if len(vals) != cols:
-                    print("Incorrect number of columns.")
-                    continue
-                if any(v not in [0, 1] for v in vals):
-                    print("Only 0 or 1 allowed.")
-                    continue
-                grid[r] = vals
-                break
-            except:
-                print("Invalid input.")
-
-    print("\n=== START & GOAL SETUP ===")
-
+    # --- GOAL INPUT ---
     while True:
         try:
-            sr, sc = [int(x) for x in input("Enter start (row col): ").split()]
-            if not in_bounds((sr, sc), rows, cols) or grid[sr, sc] == 1:
-                print("Invalid or blocked start cell.")
+            gr_gc = input("Enter GOAL position (row col): ").strip().split()
+            if len(gr_gc) != 2:
+                raise ValueError
+            gr, gc = int(gr_gc[0]), int(gr_gc[1])
+            if not in_bounds((gr, gc), rows, cols):
+                print("Goal is out of bounds. Try again.")
+                continue
+            if grid[gr, gc] == 1:
+                print("Goal is on an obstacle. Choose a free cell.")
                 continue
             break
-        except:
-            print("Invalid format.")
+        except ValueError:
+            print("Invalid format. Example: 9 9")
+        except Exception:
+            print("Invalid input. Example: 9 9")
 
-    while True:
-        try:
-            gr, gc = [int(x) for x in input("Enter goal (row col): ").split()]
-            if not in_bounds((gr, gc), rows, cols) or grid[gr, gc] == 1:
-                print("Invalid or blocked goal cell.")
-                continue
-            break
-        except:
-            print("Invalid format.")
-
+    print(f"Start = ({sr}, {sc})")
+    print(f"Goal  = ({gr}, {gc})")
     return grid, (sr, sc), (gr, gc)
 
 
-def inflate_obstacles(grid: np.ndarray, radius: int, metric="euclidean"):
+def inflate_obstacles(grid: np.ndarray, radius: int, metric: str = "euclidean") -> np.ndarray:
+    """
+    Inflate obstacles by `radius` cells. Returns new grid.
+    radius == 0 -> returns original grid (copy).
+    metric: 'euclidean' or 'manhattan'
+    """
     rows, cols = grid.shape
     inflated = grid.copy()
-    obstacles = np.argwhere(grid == 1)
+    if radius <= 0:
+        return inflated
 
+    obstacles = np.argwhere(grid == 1)
     offsets = []
     for dr in range(-radius, radius + 1):
         for dc in range(-radius, radius + 1):
             if metric == "euclidean":
-                if math.hypot(dr, dc) <= radius:
+                if math.hypot(dr, dc) <= radius + 1e-9:
                     offsets.append((dr, dc))
             else:
                 if abs(dr) + abs(dc) <= radius:

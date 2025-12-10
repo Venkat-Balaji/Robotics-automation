@@ -1,22 +1,24 @@
 # dfs_graph.py
+"""
+Graph-search DFS (iterative) with measurement helper.
+"""
+
+import time
+import tracemalloc
+from typing import Tuple, Dict, List
 import numpy as np
-import time, tracemalloc
-from typing import Dict, Tuple, List
 
 Position = Tuple[int, int]
 
-def neighbors(pos: Position, order='URDL'):
-    r, c = pos
-    mapping = {
-        'U': (r - 1, c),
-        'R': (r, c + 1),
-        'D': (r + 1, c),
-        'L': (r, c - 1)
-    }
-    for ch in order:
-        yield mapping[ch]
 
-def reconstruct_path(parent, start, goal):
+def neighbors(pos: Position, rows: int, cols: int, order: str = "URDL"):
+    r, c = pos
+    mapping = {"U": (r - 1, c), "R": (r, c + 1), "D": (r + 1, c), "L": (r, c - 1)}
+    for d in order:
+        yield mapping[d]
+
+
+def reconstruct_path(parent: Dict[Position, Position], start: Position, goal: Position):
     if goal not in parent:
         return None
     path = []
@@ -25,36 +27,42 @@ def reconstruct_path(parent, start, goal):
         path.append(cur)
         cur = parent[cur]
     path.append(start)
-    return list(reversed(path))
+    path.reverse()
+    return path
 
-def dfs_graph_iterative(grid, start, goal, order='URDL'):
+
+def dfs_graph_iterative(grid: np.ndarray, start: Position, goal: Position, order: str = "URDL"):
     rows, cols = grid.shape
     stack = [start]
     visited = set([start])
-    parent = {}
-    explored = []
+    parent: Dict[Position, Position] = {}
+    explored_order: List[Position] = []
     expansions = 0
 
     while stack:
         node = stack.pop()
-        explored.append(node)
+        explored_order.append(node)
         expansions += 1
 
         if node == goal:
+            path = reconstruct_path(parent, start, goal)
             return {
                 "found": True,
-                "path": reconstruct_path(parent, start, goal),
-                "explored": explored,
+                "path": path,
+                "explored": explored_order,
                 "visited": visited,
                 "expansions": expansions,
-                "status": "found"
+                "status": "found",
             }
 
-        for nb in neighbors(node, order):
+        for nb in neighbors(node, rows, cols, order=order):
             r, c = nb
-            if not (0 <= r < rows and 0 <= c < cols): continue
-            if grid[r][c] == 1: continue
-            if nb in visited: continue
+            if not (0 <= r < rows and 0 <= c < cols):
+                continue
+            if grid[nb] == 1:
+                continue
+            if nb in visited:
+                continue
 
             visited.add(nb)
             parent[nb] = node
@@ -63,22 +71,18 @@ def dfs_graph_iterative(grid, start, goal, order='URDL'):
     return {
         "found": False,
         "path": None,
-        "explored": explored,
+        "explored": explored_order,
         "visited": visited,
         "expansions": expansions,
-        "status": "exhausted"
+        "status": "exhausted",
     }
 
-def measure(func, *args):
+
+def measure(func, *args, **kwargs):
     tracemalloc.start()
     t0 = time.perf_counter()
-    result = func(*args)
+    res = func(*args, **kwargs)
     t1 = time.perf_counter()
-    _, peak = tracemalloc.get_traced_memory()
+    current, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
-
-    return {
-        "result": result,
-        "time_s": t1 - t0,
-        "peak_memory_kb": peak / 1024
-    }
+    return {"result": res, "time_s": t1 - t0, "peak_memory_kb": peak / 1024.0}
