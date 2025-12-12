@@ -1,13 +1,11 @@
 # visualize_dual_ui.py
 """
-Dual UI: shows Tree-search traversal (left) and Graph-search traversal (right)
-in a single figure with independent Play buttons and a single Reset Both button.
-
-Usage:
-    from visualize_dual_ui import DualGridAnimator
-    animator = DualGridAnimator(grid, start, goal,
-                               tree_explored, tree_path,
-                               graph_explored, graph_path)
+Dual UI: Tree-search (left) and Graph-search (right)
+- Shows exploration overlays (magenta boxes)
+- Robot moves ONLY on the final path (smooth interpolation)
+- Draws a BLACK LINE along the final path
+- No yellow dots
+- No separate final-path window
 """
 
 import matplotlib.pyplot as plt
@@ -15,10 +13,44 @@ from matplotlib import patches
 from matplotlib.widgets import Button
 from typing import List, Tuple
 import numpy as np
+import math
 
 Position = Tuple[int, int]
 
+# -------------------------------------------------------
+# Smooth interpolation for robot movement
+# -------------------------------------------------------
+def interpolate_path(path: List[Position], step: float = 0.15):
+    poses = []
+    if not path:
+        return poses
 
+    cy, cx = float(path[0][0]), float(path[0][1])
+    poses.append((cy, cx))
+
+    for cell in path[1:]:
+        ty, tx = float(cell[0]), float(cell[1])
+        dist = math.hypot(ty - cy, tx - cx)
+        if dist == 0:
+            poses.append((ty, tx))
+            cy, cx = ty, tx
+            continue
+
+        n = max(1, int(dist / step))
+        for i in range(1, n + 1):
+            t = i / n
+            ny = cy + (ty - cy) * t
+            nx = cx + (tx - cx) * t
+            poses.append((ny, nx))
+
+        cy, cx = ty, tx
+
+    return poses
+
+
+# -------------------------------------------------------
+# Dual Animator Class
+# -------------------------------------------------------
 class DualGridAnimator:
     def __init__(
         self,
@@ -29,188 +61,187 @@ class DualGridAnimator:
         tree_path: List[Position],
         graph_explored: List[Position],
         graph_path: List[Position],
-        delay: float = 0.25,
+        delay: float = 0.18,
     ):
         self.grid = grid
         self.start = start
         self.goal = goal
+        self.delay = delay
 
-        # traversal sequences
+        # Exploration overlays only
         self.tree_explored = tree_explored or []
-        self.tree_path = tree_path or []
         self.graph_explored = graph_explored or []
+
+        # Final robot paths
+        self.tree_path = tree_path or []
         self.graph_path = graph_path or []
 
-        # state indices
+        # Interpolated robot motion
+        self.tree_motion = interpolate_path(self.tree_path)
+        self.graph_motion = interpolate_path(self.graph_path)
+
+        # Playback indices
         self.tree_idx = 0
         self.graph_idx = 0
-
-        # play flags
         self.tree_playing = False
         self.graph_playing = False
 
-        # show final path flags (still display by default)
-        self.show_paths = True
-
-        self.delay = delay
-
-        # create figure and two axes
+        # UI setup
         self.fig = plt.figure(figsize=(12, 6))
         self.ax_tree = self.fig.add_subplot(1, 2, 1)
         self.ax_graph = self.fig.add_subplot(1, 2, 2)
         plt.subplots_adjust(bottom=0.18)
 
-        # draw bases
-        self._draw_base(self.ax_tree, title="Tree-search DFS Traversal")
-        self._draw_base(self.ax_graph, title="Graph-search DFS Traversal")
+        # draw everything
+        self._draw_base()
+        self._draw_explored()
+        self._draw_path_lines()  # <-- ADDED: draws black final robot paths
 
-        # draw explored overlays and path overlays
-        self._draw_explored_overlay(self.ax_tree, self.tree_explored)
-        self._draw_explored_overlay(self.ax_graph, self.graph_explored)
-        if self.show_paths:
-            self._draw_path_overlay(self.ax_tree, self.tree_path)
-            self._draw_path_overlay(self.ax_graph, self.graph_path)
+        # robot markers
+        self.tree_robot = patches.Circle((start[1], start[0]), 0.32, color="blue", zorder=12)
+        self.graph_robot = patches.Circle((start[1], start[0]), 0.32, color="blue", zorder=12)
 
-        # robot patches (start positions)
-        t_y, t_x = (self.tree_explored[0] if self.tree_explored else self.start)
-        g_y, g_x = (self.graph_explored[0] if self.graph_explored else self.start)
-        self.tree_robot = patches.Circle((t_x, t_y), 0.3, color="blue", zorder=12)
-        self.graph_robot = patches.Circle((g_x, g_y), 0.3, color="blue", zorder=12)
         self.ax_tree.add_patch(self.tree_robot)
         self.ax_graph.add_patch(self.graph_robot)
 
-        # status texts
+        # Status text
         self.tree_text = self.ax_tree.text(0.02, 0.98, "", transform=self.ax_tree.transAxes, va="top")
         self.graph_text = self.ax_graph.text(0.02, 0.98, "", transform=self.ax_graph.transAxes, va="top")
+
         self._update_texts()
 
-        # Controls: only Play for each panel and Reset Both
-        ax_t_play = plt.axes([0.20, 0.06, 0.12, 0.07])
-        ax_g_play = plt.axes([0.68, 0.06, 0.12, 0.07])
-        ax_reset = plt.axes([0.44, 0.03, 0.12, 0.07])
+        # UI buttons
+        ax_t = plt.axes([0.18, 0.06, 0.14, 0.07])
+        ax_g = plt.axes([0.68, 0.06, 0.14, 0.07])
+        ax_r = plt.axes([0.43, 0.03, 0.14, 0.07])
 
-        self.btn_t_play = Button(ax_t_play, "Tree Play")
-        self.btn_g_play = Button(ax_g_play, "Graph Play")
-        self.btn_reset = Button(ax_reset, "Reset Both")
+        self.btn_t_play = Button(ax_t, "Tree Play")
+        self.btn_g_play = Button(ax_g, "Graph Play")
+        self.btn_reset = Button(ax_r, "Reset Both")
 
-        # connect callbacks
-        self.btn_t_play.on_clicked(self._toggle_tree_play)
-        self.btn_g_play.on_clicked(self._toggle_graph_play)
+        self.btn_t_play.on_clicked(self._toggle_tree)
+        self.btn_g_play.on_clicked(self._toggle_graph)
         self.btn_reset.on_clicked(self._reset_both)
 
-        # run combined event loop
+        # Start animator loop
         self._run_loop()
 
-    def _draw_base(self, ax, title=""):
+    # ---------------------------------------------------
+    # Draw base map + start/goal
+    # ---------------------------------------------------
+    def _draw_base(self):
         rows, cols = self.grid.shape
-        img = np.ones((rows, cols, 3), dtype=float)
+        img = np.ones((rows, cols, 3))
         img[self.grid == 1] = (0.7, 0.7, 0.7)
-        ax.imshow(img, origin="upper", interpolation="none")
-        ax.set_xticks(range(cols))
-        ax.set_yticks(range(rows))
-        ax.set_xlim(-0.5, cols - 0.5)
-        ax.set_ylim(rows - 0.5, -0.5)
-        ax.grid(which="both", color="lightgray", linewidth=0.6)
-        ax.set_title(title)
 
-        # start/goal markers
-        ax.scatter([self.start[1]], [self.start[0]], c="red", s=120, marker="s", edgecolors="k", zorder=8)
-        ax.scatter([self.goal[1]], [self.goal[0]], c="green", s=120, marker="s", edgecolors="k", zorder=8)
+        for ax, title in [(self.ax_tree, "Tree Search"), (self.ax_graph, "Graph Search")]:
+            ax.imshow(img, origin="upper", interpolation="none")
+            ax.set_xticks(range(cols))
+            ax.set_yticks(range(rows))
+            ax.set_xlim(-0.5, cols - 0.5)
+            ax.set_ylim(rows - 0.5, -0.5)
+            ax.grid(color="lightgray", linewidth=0.6)
+            ax.set_title(title)
 
-    def _draw_explored_overlay(self, ax, explored):
-        if not explored:
+            ax.scatter([self.start[1]], [self.start[0]], c="red", s=100, marker="s", edgecolors="k", zorder=9)
+            ax.scatter([self.goal[1]], [self.goal[0]], c="green", s=100, marker="s", edgecolors="k", zorder=9)
+
+    # ---------------------------------------------------
+    # Explored overlays (visual only)
+    # ---------------------------------------------------
+    def _draw_explored(self):
+        if self.tree_explored:
+            ys = [p[0] for p in self.tree_explored]
+            xs = [p[1] for p in self.tree_explored]
+            self.ax_tree.scatter(xs, ys, s=60, facecolors="none", edgecolors="magenta", linewidth=1.3)
+
+        if self.graph_explored:
+            ys = [p[0] for p in self.graph_explored]
+            xs = [p[1] for p in self.graph_explored]
+            self.ax_graph.scatter(xs, ys, s=60, facecolors="none", edgecolors="magenta", linewidth=1.3)
+
+    # ---------------------------------------------------
+    # Draw FINAL PATH as black line (requested)
+    # ---------------------------------------------------
+    def _draw_path_lines(self):
+        if self.tree_path:
+            pr = [p[0] for p in self.tree_path]
+            pc = [p[1] for p in self.tree_path]
+            self.ax_tree.plot(pc, pr, "-k", linewidth=3, zorder=8)
+
+        if self.graph_path:
+            pr = [p[0] for p in self.graph_path]
+            pc = [p[1] for p in self.graph_path]
+            self.ax_graph.plot(pc, pr, "-k", linewidth=3, zorder=8)
+
+    # ---------------------------------------------------
+    # Controls
+    # ---------------------------------------------------
+    def _toggle_tree(self, _):
+        if not self.tree_motion:
             return
-        ex_r = [p[0] for p in explored]
-        ex_c = [p[1] for p in explored]
-        ax.scatter(ex_c, ex_r, marker="s", s=80, facecolors="none", edgecolors="magenta", linewidths=1.0, zorder=4)
-
-    def _draw_path_overlay(self, ax, path):
-        if not path:
-            return
-        pr = [p[0] for p in path]
-        pc = [p[1] for p in path]
-        ax.plot(pc, pr, "-k", linewidth=3, zorder=6)
-        ax.scatter(pc, pr, s=60, facecolors="yellow", edgecolors="k", zorder=7)
-
-    # ----------------- Controls -----------------
-    def _toggle_tree_play(self, _):
         self.tree_playing = not self.tree_playing
-        self.btn_t_play.label.set_text("Tree Pause" if self.tree_playing else "Tree Play")
+        self.btn_t_play.label.set_text("Pause" if self.tree_playing else "Tree Play")
 
-    def _toggle_graph_play(self, _):
+    def _toggle_graph(self, _):
+        if not self.graph_motion:
+            return
         self.graph_playing = not self.graph_playing
-        self.btn_g_play.label.set_text("Graph Pause" if self.graph_playing else "Graph Play")
+        self.btn_g_play.label.set_text("Pause" if self.graph_playing else "Graph Play")
 
     def _reset_both(self, _=None):
-        # stop playing and reset indices and robot positions
         self.tree_playing = False
         self.graph_playing = False
-        self.btn_t_play.label.set_text("Tree Play")
-        self.btn_g_play.label.set_text("Graph Play")
         self.tree_idx = 0
         self.graph_idx = 0
-        # reset robot patches to start
+
         self.tree_robot.center = (self.start[1], self.start[0])
         self.graph_robot.center = (self.start[1], self.start[0])
+
+        self.btn_t_play.label.set_text("Tree Play")
+        self.btn_g_play.label.set_text("Graph Play")
+
         self._update_texts()
         self.fig.canvas.draw_idle()
 
-    # ----------------- Robot updates -----------------
-    def _update_tree_robot(self):
-        if not self.tree_explored:
-            pos = self.start
-        else:
-            pos = self.tree_explored[self.tree_idx]
-        y, x = pos
-        self.tree_robot.center = (x, y)
-        self._update_texts()
-        self.fig.canvas.draw_idle()
-
-    def _update_graph_robot(self):
-        if not self.graph_explored:
-            pos = self.start
-        else:
-            pos = self.graph_explored[self.graph_idx]
-        y, x = pos
-        self.graph_robot.center = (x, y)
-        self._update_texts()
-        self.fig.canvas.draw_idle()
-
-    # ----------------- Text/status -----------------
+    # ---------------------------------------------------
+    # Updates
+    # ---------------------------------------------------
     def _update_texts(self):
-        t_total = len(self.tree_explored) - 1 if self.tree_explored else 0
-        g_total = len(self.graph_explored) - 1 if self.graph_explored else 0
-        t_cell = self.tree_explored[self.tree_idx] if self.tree_explored else self.start
-        g_cell = self.graph_explored[self.graph_idx] if self.graph_explored else self.start
-        self.tree_text.set_text(f"Tree: idx {self.tree_idx} / {t_total}\ncell {t_cell}")
-        self.graph_text.set_text(f"Graph: idx {self.graph_idx} / {g_total}\ncell {g_cell}")
+        tpos = self.tree_motion[self.tree_idx] if self.tree_motion else self.start
+        gpos = self.graph_motion[self.graph_idx] if self.graph_motion else self.start
 
-    # ----------------- Main loop -----------------
+        self.tree_text.set_text(f"Tree robot: {tuple(round(v,2) for v in tpos)}")
+        self.graph_text.set_text(f"Graph robot: {tuple(round(v,2) for v in gpos)}")
+
+    # ---------------------------------------------------
+    # Main playback loop
+    # ---------------------------------------------------
     def _run_loop(self):
-        # main combined loop that updates both panels when playing
         try:
             while plt.fignum_exists(self.fig.number):
-                advanced = False
-                if self.tree_playing and self.tree_explored:
-                    if self.tree_idx < len(self.tree_explored) - 1:
-                        self.tree_idx += 1
-                        self._update_tree_robot()
-                        advanced = True
-                    else:
-                        self.tree_playing = False
-                        self.btn_t_play.label.set_text("Tree Play")
-                if self.graph_playing and self.graph_explored:
-                    if self.graph_idx < len(self.graph_explored) - 1:
-                        self.graph_idx += 1
-                        self._update_graph_robot()
-                        advanced = True
-                    else:
-                        self.graph_playing = False
-                        self.btn_g_play.label.set_text("Graph Play")
-                # small pause to keep UI responsive
+
+                moved = False
+
+                # TREE motion
+                if self.tree_playing and self.tree_idx < len(self.tree_motion) - 1:
+                    self.tree_idx += 1
+                    py, px = self.tree_motion[self.tree_idx]
+                    self.tree_robot.center = (px, py)
+                    moved = True
+
+                # GRAPH motion
+                if self.graph_playing and self.graph_idx < len(self.graph_motion) - 1:
+                    self.graph_idx += 1
+                    py, px = self.graph_motion[self.graph_idx]
+                    self.graph_robot.center = (px, py)
+                    moved = True
+
+                if moved:
+                    self._update_texts()
+                    self.fig.canvas.draw_idle()
+
                 plt.pause(self.delay)
-                # avoid busy spin when nothing playing
-                if not advanced:
-                    plt.pause(0.01)
+
         except Exception as e:
-            print("Dual animator stopped:", e)
+            print("Animator stopped:", e)

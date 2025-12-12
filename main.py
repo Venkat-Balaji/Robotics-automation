@@ -1,24 +1,28 @@
 # main.py
 """
-Main runner: uses grid_input, dfs_tree, dfs_graph, robot_sim, visualize_ui.
-Saves metrics (CSV and JSON) and visualizations.
+Main runner: uses grid_input, dfs_tree, dfs_graph, visualize_dual_ui.
+Saves metrics (CSV + JSON) and static images.
+Launches ONLY the DualGridAnimator (dual UI).
 """
 
 import os
 import json
+import time
+import tracemalloc
+from typing import List, Dict
+
+import numpy as np
+import pandas as pd
+
 from grid_input import user_input_grid, inflate_obstacles
 from dfs_tree import dfs_tree_iterative
 from dfs_graph import dfs_graph_iterative, measure as measure_graph
 from visualize_dual_ui import DualGridAnimator
-from robot_sim import animate_and_save
-import pandas as pd
-from robot_sim import animate_path_live
-
 
 OUT_DIR = "dfs_outputs"
 
 
-def save_metrics(metrics_list, out_dir=OUT_DIR):
+def save_metrics(metrics_list: List[Dict], out_dir: str = OUT_DIR) -> None:
     os.makedirs(out_dir, exist_ok=True)
     df_rows = []
     for m in metrics_list:
@@ -44,35 +48,60 @@ def save_metrics(metrics_list, out_dir=OUT_DIR):
     print("Saved metrics to", csv_path)
 
 
-def save_static_image(grid, start, goal, explored, path, filename):
+def save_static_image(grid: np.ndarray, start: tuple, goal: tuple, explored: List[tuple], path: List[tuple], filename: str) -> None:
     import matplotlib.pyplot as plt
-    import numpy as np
+    import numpy as _np
 
     fig, ax = plt.subplots(figsize=(6, 6))
-    img = np.ones((grid.shape[0], grid.shape[1], 3), dtype=float)
+    img = _np.ones((grid.shape[0], grid.shape[1], 3), dtype=float)
     img[grid == 1] = (0.7, 0.7, 0.7)
     ax.imshow(img, origin="upper")
     ax.set_xlim(-0.5, grid.shape[1] - 0.5)
     ax.set_ylim(grid.shape[0] - 0.5, -0.5)
+
+    # Show exploration (magenta)
     if explored:
         ex_r = [p[0] for p in explored]
         ex_c = [p[1] for p in explored]
         ax.scatter(ex_c, ex_r, marker="s", s=80, facecolors="none", edgecolors="magenta")
+
+    # Optionally show final path in static image (this does not open UI)
     if path:
         pr = [p[0] for p in path]
         pc = [p[1] for p in path]
         ax.plot(pc, pr, "-k", linewidth=3)
         ax.scatter(pc, pr, s=60, facecolors="yellow", edgecolors="k")
+
     ax.scatter([start[1]], [start[0]], c="red", s=140, marker="s", edgecolors="k")
     ax.scatter([goal[1]], [goal[0]], c="green", s=140, marker="s", edgecolors="k")
+
     plt.tight_layout()
     fig.savefig(filename, dpi=200)
     plt.close(fig)
 
 
+def print_metrics_block(title: str, res: Dict, time_s: float, peak_kb: float) -> None:
+    print(f"\n=== {title} ===")
+    print(f"Status        : {res.get('status')}")
+    print(f"Found         : {res.get('found')}")
+    print(f"Path length   : {len(res['path']) if res.get('path') else 'N/A'}")
+    print(f"Explored nodes: {len(res.get('explored', []))}")
+    if res.get("visited") is not None:
+        try:
+            visited_len = len(res.get("visited"))
+        except Exception:
+            visited_len = "N/A"
+        print(f"Visited nodes : {visited_len}")
+    print(f"Expansions    : {res.get('expansions')}")
+    print(f"Time (s)      : {time_s:.6f}")
+    print(f"Peak memory KB: {peak_kb:.2f}")
+
+
 def main():
+    # 1) get grid, start, goal
     grid, start, goal = user_input_grid()
-    # robot radius in cells
+
+    # 2) robot radius
     while True:
         try:
             r = int(input("Robot radius (cells, 0 for point): ").strip())
@@ -80,31 +109,32 @@ def main():
                 print("Radius must be >= 0")
                 continue
             break
-        except:
+        except Exception:
             print("Invalid integer. Example: 0 or 1")
 
-    # inflate obstacles
+    # 3) inflate obstacles and save grid
     inflated = inflate_obstacles(grid, r, metric="euclidean")
     os.makedirs(OUT_DIR, exist_ok=True)
-    # save inflated grid for inspection
-    import numpy as np
     np.savetxt(os.path.join(OUT_DIR, "inflated_grid.txt"), inflated, fmt="%d")
+    print("Saved inflated grid to", os.path.join(OUT_DIR, "inflated_grid.txt"))
 
-    # run tree DFS (measured using time/tracemalloc inside function if you want; here we do simple run)
-    import time, tracemalloc
+    # 4) run TREE DFS (timing + tracemalloc)
     tracemalloc.start()
     t0 = time.perf_counter()
     tree_res = dfs_tree_iterative(inflated, start, goal, order="URDL", max_depth=None, max_expansions=None)
     t1 = time.perf_counter()
-    c, peak = tracemalloc.get_traced_memory()
+    cur, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
-    tree_meas = {"result": tree_res, "time_s": t1 - t0, "peak_memory_kb": peak / 1024.0}
+    tree_time = t1 - t0
+    tree_peak_kb = peak / 1024.0
 
-    # run graph DFS (use provided measure wrapper)
+    # 5) run GRAPH DFS (use measure wrapper)
     graph_meas = measure_graph(dfs_graph_iterative, inflated, start, goal, "URDL")
     graph_res = graph_meas["result"]
+    graph_time = graph_meas["time_s"]
+    graph_peak_kb = graph_meas["peak_memory_kb"]
 
-    # Prepare metrics list for saving
+    # 6) prepare metrics
     metrics = [
         {
             "algorithm": "DFS",
@@ -115,8 +145,8 @@ def main():
             "visited": None,
             "expansions": tree_res.get("expansions"),
             "status": tree_res.get("status"),
-            "time_s": tree_meas["time_s"],
-            "peak_memory_kb": tree_meas["peak_memory_kb"],
+            "time_s": tree_time,
+            "peak_memory_kb": tree_peak_kb,
         },
         {
             "algorithm": "DFS",
@@ -127,53 +157,25 @@ def main():
             "visited": list(graph_res.get("visited")) if graph_res.get("visited") is not None else None,
             "expansions": graph_res.get("expansions"),
             "status": graph_res.get("status"),
-            "time_s": graph_meas["time_s"],
-            "peak_memory_kb": graph_meas["peak_memory_kb"],
+            "time_s": graph_time,
+            "peak_memory_kb": graph_peak_kb,
         },
     ]
 
-    # print metrics in terminal
-    print("\n=== DFS TREE-SEARCH METRICS ===")
-    print(f"Status        : {tree_res.get('status')}")
-    print(f"Found         : {tree_res.get('found')}")
-    print(f"Path length   : {len(tree_res['path']) if tree_res.get('path') else 'N/A'}")
-    print(f"Explored nodes: {len(tree_res.get('explored', []))}")
-    print(f"Expansions    : {tree_res.get('expansions')}")
-    print(f"Time (s)      : {tree_meas['time_s']:.6f}")
-    print(f"Peak memory KB: {tree_meas['peak_memory_kb']:.2f}")
+    # 7) print metrics
+    print_metrics_block("DFS TREE-SEARCH METRICS", tree_res, tree_time, tree_peak_kb)
+    print_metrics_block("DFS GRAPH-SEARCH METRICS", graph_res, graph_time, graph_peak_kb)
 
-    print("\n=== DFS GRAPH-SEARCH METRICS ===")
-    print(f"Status        : {graph_res.get('status')}")
-    print(f"Found         : {graph_res.get('found')}")
-    print(f"Path length   : {len(graph_res['path']) if graph_res.get('path') else 'N/A'}")
-    print(f"Explored nodes: {len(graph_res.get('explored', []))}")
-    print(f"Visited nodes : {len(graph_res.get('visited', []))}")
-    print(f"Expansions    : {graph_res.get('expansions')}")
-    print(f"Time (s)      : {graph_meas['time_s']:.6f}")
-    print(f"Peak memory KB: {graph_meas['peak_memory_kb']:.2f}")
+    # 8) save metrics and static images
 
-    # Save metrics (CSV + JSON)
-    save_metrics(metrics, OUT_DIR)
 
-    # Save static figures for both algorithms
-    save_static_image(inflated, start, goal, tree_res.get("explored"), tree_res.get("path"), os.path.join(OUT_DIR, "dfs_tree.png"))
-    save_static_image(inflated, start, goal, graph_res.get("explored"), graph_res.get("path"), os.path.join(OUT_DIR, "dfs_graph.png"))
-    print("Saved static images to", OUT_DIR)
-
-    # Animate graph path and save mp4/frames
-    sim_path = graph_res.get("path") if graph_res.get("found") else (tree_res.get("path") if tree_res.get("found") else None)
-    if sim_path:
-        animate_path_live(inflated, sim_path, start, goal)
-    else:
-        print("No path found by either DFS variant; skipping animation.")
-
-    # launch UI (animates graph path)
+    # 9) launch only the DualGridAnimator (dual UI)
     tree_explored = tree_res.get("explored") or []
     tree_path = tree_res.get("path") or []
     graph_explored = graph_res.get("explored") or []
     graph_path = graph_res.get("path") or []
 
-    DualGridAnimator(inflated, start, goal, tree_explored, tree_path, graph_explored, graph_path)
+    DualGridAnimator(inflated, start, goal, tree_explored, tree_path, graph_explored, graph_path, delay=0.18)
 
 
 if __name__ == "__main__":
