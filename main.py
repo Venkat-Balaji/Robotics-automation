@@ -12,6 +12,8 @@ from dfs_graph import dfs_graph_iterative, measure as measure_graph
 from visualize_dual_ui import DualGridAnimator
 from robot_sim import animate_and_save
 import pandas as pd
+from robot_sim import animate_path_live
+
 
 OUT_DIR = "dfs_outputs"
 
@@ -161,7 +163,7 @@ def main():
     # Animate graph path and save mp4/frames
     sim_path = graph_res.get("path") if graph_res.get("found") else (tree_res.get("path") if tree_res.get("found") else None)
     if sim_path:
-        animate_and_save(inflated, sim_path, start, goal, OUT_DIR, filename_mp4="robot_follow.mp4", save_mp4=True)
+        animate_path_live(inflated, sim_path, start, goal)
     else:
         print("No path found by either DFS variant; skipping animation.")
 

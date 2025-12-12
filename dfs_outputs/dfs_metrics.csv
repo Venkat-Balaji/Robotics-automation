@@ -1,3 +1,0 @@
-algorithm,variant,found,time_s,peak_memory_kb,explored_count,visited_count,path_length,expansions,status
-DFS,tree-search,True,0.00031489995308220387,1.5859375,23,,23,23,found
-DFS,graph-search,True,0.0002536000683903694,5.7421875,31,35.0,19,31,found
