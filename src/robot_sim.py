@@ -1,17 +1,13 @@
 # robot_sim.py
-"""
-Robot simulator: smooth interpolation between discrete cells.
-NO saving of MP4 or PNG. Only live on-screen animation.
-"""
+"""Robot simulator: smooth interpolation between discrete cells. NO saving of MP4 or PNG."""
 
 import math
-from typing import List, Tuple
+from typing import List, Tuple, Generator
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
 Position = Tuple[int, int]
-
 
 class Robot:
     def __init__(self, start_cell: Position, grid: np.ndarray, radius_cells: int = 0, interp_step: float = 0.15):
@@ -24,15 +20,10 @@ class Robot:
     def is_collision_cell(self, cell: Position) -> bool:
         r, c = cell
         rows, cols = self.grid.shape
-        if not (0 <= r < rows and 0 <= c < cols):
-            return True
-        return self.grid[r, c] == 1
+        return not (0 <= r < rows and 0 <= c < cols) or self.grid[r, c] == 1
 
-    def follow_path_steps(self, path: List[Position]):
-        """
-        Generator: yields continuous poses (row, col) as robot moves along path.
-        Raises RuntimeError on collision.
-        """
+    def follow_path_steps(self, path: List[Position]) -> Generator:
+        """Generator: yields continuous poses (row, col) as robot moves along path. Raises RuntimeError on collision."""
         for cell in path:
             if self.is_collision_cell(cell):
                 raise RuntimeError(f"Collision at target cell {cell} before entering.")
@@ -47,63 +38,41 @@ class Robot:
             steps = max(1, int(dist / self.step))
             for s in range(1, steps + 1):
                 t = s / steps
-                ny = sy + (ty - sy) * t
-                nx = sx + (tx - sx) * t
+                ny, nx = sy + (ty - sy) * t, sx + (tx - sx) * t
                 self.pose = (ny, nx)
-                nearest_cell = (int(round(ny)), int(round(nx)))
-                if self.is_collision_cell(nearest_cell):
-                    raise RuntimeError(f"Collision while moving near {nearest_cell}")
+                if self.is_collision_cell((int(round(ny)), int(round(nx)))):
+                    raise RuntimeError(f"Collision while moving near {int(round(ny)), int(round(nx))}")
                 yield self.pose
-            # finalize
-            self.cell = cell
-            self.pose = (ty, tx)
+            self.cell, self.pose = cell, (ty, tx)
             yield self.pose
 
-
 def animate_path_live(grid: np.ndarray, path: List[Position], start: Position, goal: Position):
-    """
-    Only displays animation LIVE.
-    NO saving to MP4 or PNG.
-    """
-
+    """Only displays animation LIVE. NO saving to MP4 or PNG."""
     fig, ax = plt.subplots(figsize=(6, 6))
-
-    # draw grid
     img = np.ones((grid.shape[0], grid.shape[1], 3), dtype=float)
     img[grid == 1] = (0.7, 0.7, 0.7)
     ax.imshow(img, origin="upper", interpolation="none")
     ax.set_xlim(-0.5, grid.shape[1] - 0.5)
     ax.set_ylim(grid.shape[0] - 0.5, -0.5)
 
-    # draw path
     if path:
-        pr = [p[0] for p in path]
-        pc = [p[1] for p in path]
+        pr, pc = zip(*path)
         ax.plot(pc, pr, "-k", linewidth=3)
         ax.scatter(pc, pr, s=50, facecolors="yellow", edgecolors="k")
 
-    # start & goal
     ax.scatter([start[1]], [start[0]], c="red", s=140, marker="s")
     ax.scatter([goal[1]], [goal[0]], c="green", s=140, marker="s")
 
     robot = Robot(start, grid)
     poses = [robot.pose]
-
     try:
         for p in robot.follow_path_steps(path):
             poses.append(p)
     except RuntimeError as e:
         print("Simulation aborted:", e)
 
-    # Robot patch
     robot_patch = plt.Circle((start[1], start[0]), 0.3, color="blue", zorder=10)
     ax.add_patch(robot_patch)
-
-    def update(i):
-        pose = poses[i]
-        robot_patch.center = (pose[1], pose[0])
-        return (robot_patch,)
-
-    animation.FuncAnimation(fig, update, frames=len(poses), interval=40, blit=False, repeat=False)
-
-    plt.show()  # ONLY show, no saving
+    animation.FuncAnimation(fig, lambda i: (robot_patch.set_center((poses[i][1], poses[i][0])), (robot_patch,))[1],
+                          frames=len(poses), interval=40, blit=False, repeat=False)
+    plt.show()
